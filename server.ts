@@ -94,6 +94,8 @@ const upload = multer({
 });
 
 app.use(express.json());
+app.use('/storage/temp_frames', express.static(FRAMES_DIR));
+app.use('/storage/temp_uploads', express.static(UPLOAD_DIR));
 
 // Consistent JSON error response helper
 function jsonError(res: express.Response, statusCode: number, message: string) {
@@ -201,7 +203,7 @@ app.get('/api/health', (_req, res) => {
 
 // Video upload endpoint
 app.post('/api/videos/upload', (req, res) => {
-  upload.single('file')(req, res, (err) => {
+  upload.single('file')(req as any, res as any, (err: any) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return jsonError(res, 413, 'File exceeds maximum allowed size of 100 MB.');
