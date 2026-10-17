@@ -1,0 +1,8 @@
+{
+  "name": "Remix Threat Prevention",
+  "description": "Threat Prevention platform for CODE//CONNECT’26 — Problem Statement 02.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
