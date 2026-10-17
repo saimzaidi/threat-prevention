@@ -1,4 +1,4 @@
-import { AlertRecord, IncidentRecord, SimulationScenario, ActivityLogItem } from '../types';
+import type { AlertRecord, IncidentRecord, SimulationScenario, ActivityLogItem } from '../types/index.ts';
 
 export const SAMPLE_INCIDENTS: IncidentRecord[] = [
   {

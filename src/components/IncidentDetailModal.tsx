@@ -17,15 +17,18 @@ interface IncidentDetailModalProps {
   onClose: () => void;
   onUpdateStatus: (incidentId: string, newStatus: IncidentStatus) => void;
   onAddNote: (incidentId: string, noteText: string) => void;
+  onNavigateToVideoAnalysis?: (uploadId?: string) => void;
 }
 
 export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
   incident,
   onClose,
   onUpdateStatus,
-  onAddNote
+  onAddNote,
+  onNavigateToVideoAnalysis
 }) => {
   const [noteText, setNoteText] = useState('');
+  const [evidenceLoadError, setEvidenceLoadError] = useState(false);
 
   if (!incident) return null;
 
@@ -134,6 +137,16 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
             </div>
           )}
 
+          {/* AI Candidate Detection Disclaimer for Real Model */}
+          {incident.source === 'real_model' && (
+            <div className="p-3 bg-blue-50/80 border border-blue-200 rounded-lg text-xs text-blue-900 flex items-start gap-2.5">
+              <Info className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold">Candidate Smoke Detection (Human Review Required):</span> This record was generated from genuine AI inference ({incident.modelIdentifier || 'YOLO11s ONNX CPU'}). It indicates an unconfirmed visual candidate, not proof of fire or an emergency. Operator inspection of visual evidence is required before initiating response protocols.
+              </div>
+            </div>
+          )}
+
           {/* Core metadata grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div className="p-3 rounded-lg border border-stone-200 bg-stone-50/50 space-y-1">
@@ -168,6 +181,74 @@ export const IncidentDetailModal: React.FC<IncidentDetailModalProps> = ({
               </p>
             </div>
           </div>
+
+          {/* Visual Evidence Section */}
+          {incident.evidenceFrameUrl && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-neutral-900 uppercase tracking-wider">
+                  Detection Evidence & Bounding Boxes
+                </h3>
+                {incident.uploadId && onNavigateToVideoAnalysis && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onNavigateToVideoAnalysis(incident.uploadId);
+                    }}
+                    className="text-[11px] text-blue-700 hover:text-blue-900 font-medium underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>Inspect in Video Analysis View</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="bg-stone-50 border border-stone-200 rounded-xl p-3 space-y-3">
+                <div className="relative mx-auto max-w-lg rounded-lg overflow-hidden border border-neutral-800 bg-black flex items-center justify-center">
+                  {!evidenceLoadError ? (
+                    <>
+                      <img
+                        src={incident.evidenceFrameUrl}
+                        alt="Evidence frame"
+                        onError={() => setEvidenceLoadError(true)}
+                        className="w-full h-auto block"
+                      />
+                      {incident.affectedFrames && incident.affectedFrames[0]?.normalized_bbox && (
+                        <div
+                          className="absolute border-2 border-amber-500 bg-amber-500/20 pointer-events-none"
+                          style={{
+                            top: `${incident.affectedFrames[0].normalized_bbox.y1 * 100}%`,
+                            left: `${incident.affectedFrames[0].normalized_bbox.x1 * 100}%`,
+                            width: `${(incident.affectedFrames[0].normalized_bbox.x2 - incident.affectedFrames[0].normalized_bbox.x1) * 100}%`,
+                            height: `${(incident.affectedFrames[0].normalized_bbox.y2 - incident.affectedFrames[0].normalized_bbox.y1) * 100}%`,
+                          }}
+                        >
+                          <div className="absolute -top-5 left-0 bg-amber-600 text-white text-[9px] font-mono px-1 py-0.2 rounded font-semibold whitespace-nowrap shadow-xs">
+                            smoke: {((incident.detectionScore || 0) * 100).toFixed(1)}%
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="p-8 text-center text-xs text-neutral-400">
+                      Evidence frame image was cleared or is not available in ephemeral cache.
+                    </div>
+                  )}
+                </div>
+
+                {incident.affectedFrames && incident.affectedFrames.length > 0 && (
+                  <div className="text-[11px] font-mono text-neutral-600 flex flex-wrap gap-2 pt-1 border-t border-stone-200">
+                    <span className="font-sans font-medium text-neutral-800">Affected Frames ({incident.affectedFramesCount || incident.affectedFrames.length}):</span>
+                    {incident.affectedFrames.map((af, i) => (
+                      <span key={i} className="bg-white border border-stone-200 px-1.5 py-0.5 rounded">
+                        Frame #{af.frame_index} ({af.timestamp_formatted}) · {(af.confidence * 100).toFixed(1)}%
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Description */}
           <div>

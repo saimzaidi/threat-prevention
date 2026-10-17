@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+models/
+storage/temp_uploads/
+storage/temp_frames/
+*.onnx
+*.db
+data/*.db

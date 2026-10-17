@@ -13,7 +13,15 @@ import { IncidentsView } from './components/IncidentsView';
 import { ScenarioSimulatorView } from './components/ScenarioSimulatorView';
 import { SettingsView } from './components/SettingsView';
 import { IncidentDetailModal } from './components/IncidentDetailModal';
-import { checkBackendHealth, BackendHealthState } from './api/client';
+import { 
+  checkBackendHealth, 
+  BackendHealthState,
+  fetchIncidents,
+  fetchAlerts,
+  updateIncidentStatusApi,
+  addIncidentNoteApi,
+  acknowledgeAlertApi
+} from './api/client';
 import { 
   SAMPLE_INCIDENTS, 
   SAMPLE_ALERTS, 
@@ -43,6 +51,24 @@ export default function App() {
   const [activityLog, setActivityLog] = useState<ActivityLogItem[]>(INITIAL_ACTIVITY_LOG);
   const [selectedIncident, setSelectedIncident] = useState<IncidentRecord | null>(null);
 
+  // Load persistent records from SQLite backend
+  const loadDatabaseRecords = useCallback(async () => {
+    try {
+      const [incRes, altRes] = await Promise.all([
+        fetchIncidents(),
+        fetchAlerts()
+      ]);
+      if (incRes.success && incRes.data) {
+        setIncidents(incRes.data);
+      }
+      if (altRes.success && altRes.data) {
+        setAlerts(altRes.data);
+      }
+    } catch {
+      // Fallback preserves initial state on network failure
+    }
+  }, []);
+
   // Safe health-check trigger
   const verifyBackendHealth = useCallback(async () => {
     setBackendState(prev => ({ ...prev, status: 'checking' }));
@@ -53,6 +79,7 @@ export default function App() {
         data: result.data,
         lastChecked: new Date().toLocaleTimeString(),
       });
+      loadDatabaseRecords();
     } else {
       setBackendState({
         status: 'disconnected',
@@ -60,9 +87,9 @@ export default function App() {
         lastChecked: new Date().toLocaleTimeString(),
       });
     }
-  }, []);
+  }, [loadDatabaseRecords]);
 
-  // Check health on initial mount
+  // Check health and load persistent records on initial mount
   useEffect(() => {
     verifyBackendHealth();
   }, [verifyBackendHealth]);
@@ -75,23 +102,23 @@ export default function App() {
       setAlerts([]);
       setIsDemoMode(false);
     } else {
-      // Re-populate sample data
-      setIncidents(SAMPLE_INCIDENTS);
-      setAlerts(SAMPLE_ALERTS);
+      loadDatabaseRecords();
       setIsDemoMode(true);
     }
   };
 
-  // Status progression handler
-  const handleUpdateIncidentStatus = (incidentId: string, newStatus: IncidentStatus) => {
+  // Status progression handler (persists to SQLite)
+  const handleUpdateIncidentStatus = async (incidentId: string, newStatus: IncidentStatus) => {
+    const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+    // Optimistic UI update
     setIncidents(prev => prev.map(inc => {
       if (inc.id === incidentId) {
         const updated = {
           ...inc,
           status: newStatus,
-          resolvedAt: newStatus === 'resolved' ? new Date().toISOString().replace('T', ' ').substring(0, 19) : inc.resolvedAt
+          resolvedAt: newStatus === 'resolved' ? timestamp : (newStatus === 'investigating' && inc.status === 'resolved' ? undefined : inc.resolvedAt)
         };
-        // Update selected incident if open in modal
         if (selectedIncident && selectedIncident.id === incidentId) {
           setSelectedIncident(updated);
         }
@@ -100,6 +127,17 @@ export default function App() {
       return inc;
     }));
 
+    // Persist to backend SQLite
+    try {
+      const res = await updateIncidentStatusApi(incidentId, newStatus);
+      if (res.success && res.data) {
+        setIncidents(prev => prev.map(inc => inc.id === incidentId ? res.data! : inc));
+        if (selectedIncident && selectedIncident.id === incidentId) {
+          setSelectedIncident(res.data);
+        }
+      }
+    } catch {}
+
     // Append to audit trail
     const newLog: ActivityLogItem = {
       id: `act-${Date.now()}`,
@@ -107,18 +145,19 @@ export default function App() {
       targetId: incidentId,
       targetType: 'incident',
       operator: 'Operator (Desk 01)',
-      timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      timestamp,
       details: `Operator updated incident status to ${newStatus}`
     };
     setActivityLog(prev => [newLog, ...prev]);
   };
 
-  // Add operator note
-  const handleAddNote = (incidentId: string, noteText: string) => {
+  // Add operator note (persists to SQLite)
+  const handleAddNote = async (incidentId: string, noteText: string) => {
+    const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
     const newNote = {
       id: `note-${Date.now()}`,
       author: 'Operator (Desk 01)',
-      timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      timestamp,
       text: noteText
     };
 
@@ -136,6 +175,11 @@ export default function App() {
       return inc;
     }));
 
+    // Persist to backend SQLite
+    try {
+      await addIncidentNoteApi(incidentId, noteText);
+    } catch {}
+
     // Append to audit trail
     const newLog: ActivityLogItem = {
       id: `act-${Date.now()}`,
@@ -143,20 +187,24 @@ export default function App() {
       targetId: incidentId,
       targetType: 'incident',
       operator: 'Operator (Desk 01)',
-      timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      timestamp,
       details: `Added observation: "${noteText.slice(0, 40)}..."`
     };
     setActivityLog(prev => [newLog, ...prev]);
   };
 
-  // Acknowledge alert
-  const handleAcknowledgeAlert = (alertId: string) => {
+  // Acknowledge alert (persists to SQLite)
+  const handleAcknowledgeAlert = async (alertId: string) => {
     setAlerts(prev => prev.map(a => {
       if (a.id === alertId) {
         return { ...a, acknowledged: true };
       }
       return a;
     }));
+
+    try {
+      await acknowledgeAlertApi(alertId);
+    } catch {}
 
     const newLog: ActivityLogItem = {
       id: `act-${Date.now()}`,
@@ -169,6 +217,7 @@ export default function App() {
     };
     setActivityLog(prev => [newLog, ...prev]);
   };
+
 
   // Scenario Simulator: Inject a predefined scenario into local state
   const handleInjectScenario = (scenario: SimulationScenario) => {
@@ -290,7 +339,19 @@ export default function App() {
           )}
 
           {currentTab === 'video-analysis' && (
-            <VideoAnalysisView />
+            <VideoAnalysisView 
+              onNavigateToIncident={(incidentId) => {
+                const found = incidents.find(i => i.id === incidentId);
+                if (found) {
+                  setSelectedIncident(found);
+                } else {
+                  loadDatabaseRecords().then(() => {
+                    setCurrentTab('incidents');
+                  });
+                }
+              }}
+              onRefreshIncidents={loadDatabaseRecords}
+            />
           )}
 
           {currentTab === 'simulator' && (
@@ -316,6 +377,9 @@ export default function App() {
         onClose={() => setSelectedIncident(null)}
         onUpdateStatus={handleUpdateIncidentStatus}
         onAddNote={handleAddNote}
+        onNavigateToVideoAnalysis={(_uploadId) => {
+          setCurrentTab('video-analysis');
+        }}
       />
     </div>
   );

@@ -33,6 +33,18 @@ export interface IncidentRecord {
   createdAt: string;
   resolvedAt?: string;
   evidenceFrameUrl?: string;
+  uploadId?: string;
+  modelIdentifier?: string;
+  affectedFramesCount?: number;
+  affectedFrames?: Array<{
+    frame_index: number;
+    timestamp_seconds: number;
+    timestamp_formatted: string;
+    confidence: number;
+    bbox?: BoundingBox;
+    normalized_bbox?: NormalizedBoundingBox;
+    filename?: string;
+  }>;
   notes: OperatorNote[];
   isSampleData?: boolean;
 }

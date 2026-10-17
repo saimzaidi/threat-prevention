@@ -5,6 +5,16 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import multer from 'multer';
 import { execFile } from 'child_process';
+import { runSmokeInference, getModelMetadata } from './src/services/smokeDetector.ts';
+import {
+  getAllIncidents,
+  getIncidentById,
+  updateIncidentStatus,
+  addIncidentNote,
+  getAllAlerts,
+  acknowledgeAlert,
+  createIncidentFromDetection
+} from './server/db.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -406,6 +416,255 @@ async function handleFrameSampling(req: express.Request, res: express.Response) 
 
 app.post('/api/videos/:upload_id/sample-frames', handleFrameSampling);
 app.post('/api/videos/:upload_id/sample', handleFrameSampling);
+
+// Model metadata endpoint
+app.get('/api/model/status', (_req, res) => {
+  try {
+    const meta = getModelMetadata();
+    return res.status(200).json(meta);
+  } catch (err: any) {
+    return jsonError(res, 500, `Failed to retrieve model metadata: ${err.message}`);
+  }
+});
+
+// Stage 5: Genuine Smoke Detection Endpoint (YOLO11s ONNX CPU)
+async function handleSmokeDetection(req: express.Request, res: express.Response) {
+  const uploadId = req.params.upload_id;
+  let record = uploadsDb.get(uploadId);
+
+  // If not in in-memory map, check storage
+  if (!record) {
+    try {
+      const files = fs.readdirSync(UPLOAD_DIR);
+      const match = files.find((f) => path.parse(f).name === uploadId);
+      if (match) {
+        const fullPath = path.join(UPLOAD_DIR, match);
+        const stats = fs.statSync(fullPath);
+        const ext = path.extname(match).toLowerCase();
+        record = {
+          upload_id: uploadId,
+          original_filename: match,
+          stored_filename: match,
+          file_path: fullPath,
+          size_bytes: stats.size,
+          content_type: `video/${ext.replace(/^\./, '')}`,
+          status: 'uploaded',
+          created_at: stats.birthtime.toISOString(),
+          storage_mode: 'ephemeral_local',
+          analysis_status: 'pending_inference',
+        };
+        uploadsDb.set(uploadId, record);
+      }
+    } catch {}
+  }
+
+  // Validate that frames have been sampled for this upload
+  const uploadFramesDir = path.join(FRAMES_DIR, uploadId);
+  if (!fs.existsSync(uploadFramesDir)) {
+    return jsonError(
+      res,
+      400,
+      `No sampled frames found for upload '${uploadId}'. Please sample frames first (Stage 4) before running detector inference.`
+    );
+  }
+
+  const frameFiles = fs
+    .readdirSync(uploadFramesDir)
+    .filter((f) => f.startsWith('frame_') && f.endsWith('.jpg'));
+
+  if (frameFiles.length === 0) {
+    return jsonError(
+      res,
+      400,
+      `No frame images available for upload '${uploadId}'. Please sample frames first (Stage 4).`
+    );
+  }
+
+  // Verify model exists on disk
+  const modelMeta = getModelMetadata();
+  if (!modelMeta.model_file_exists) {
+    return jsonError(
+      res,
+      503,
+      `Detector model file not found at '${modelMeta.model_path}'. Ensure the ONNX model artifact is present.`
+    );
+  }
+
+  const confThreshold = Math.max(
+    0.05,
+    Math.min(0.95, parseFloat(req.body?.confidence_threshold || '0.20'))
+  );
+  const iouThreshold = Math.max(
+    0.1,
+    Math.min(0.9, parseFloat(req.body?.iou_threshold || '0.45'))
+  );
+  const intervalSeconds = Math.max(
+    0.5,
+    Math.min(10.0, parseFloat(req.body?.interval_seconds || '1.0'))
+  );
+
+  let width = 640;
+  let height = 360;
+
+  if (record && fs.existsSync(record.file_path)) {
+    try {
+      const probeData = await probeVideo(record.file_path);
+      const stream = probeData.streams[0];
+      if (stream.width) width = stream.width;
+      if (stream.height) height = stream.height;
+    } catch {}
+  }
+
+  try {
+    const analysisResult = await runSmokeInference(
+      uploadId,
+      confThreshold,
+      iouThreshold,
+      intervalSeconds,
+      width,
+      height
+    );
+
+    if (record) {
+      record.analysis_status = analysisResult.smoke_detected
+        ? 'smoke_candidate_detected'
+        : 'clean_no_smoke_detected';
+    }
+
+    // Stage 6: Automatically create/update genuine incident record if smoke detected
+    let incidentCreation = null;
+    if (analysisResult.smoke_detected && analysisResult.frames_with_detections > 0) {
+      incidentCreation = createIncidentFromDetection(
+        uploadId,
+        record?.original_filename || `${uploadId}.mp4`,
+        analysisResult
+      );
+    }
+
+    return res.status(200).json({
+      ...analysisResult,
+      incident_record: incidentCreation?.incident || null,
+      incident_created: Boolean(incidentCreation && !incidentCreation.isDuplicate),
+      incident_updated: Boolean(incidentCreation && incidentCreation.isDuplicate),
+      incident_message: incidentCreation?.message || null,
+    });
+  } catch (err: any) {
+    return jsonError(res, 500, `Inference execution failed: ${err.message}`);
+  }
+}
+
+app.post('/api/videos/:upload_id/detect-smoke', handleSmokeDetection);
+app.post('/api/videos/:upload_id/detect', handleSmokeDetection);
+
+// Stage 6: Incident Management REST Endpoints
+app.get('/api/incidents', (_req, res) => {
+  try {
+    const list = getAllIncidents();
+    return res.status(200).json(list);
+  } catch (err: any) {
+    return jsonError(res, 500, `Failed to retrieve incidents: ${err.message}`);
+  }
+});
+
+app.get('/api/incidents/:id', (req, res) => {
+  try {
+    const inc = getIncidentById(req.params.id);
+    if (!inc) {
+      return jsonError(res, 404, `Incident '${req.params.id}' not found.`);
+    }
+    return res.status(200).json(inc);
+  } catch (err: any) {
+    return jsonError(res, 500, `Failed to retrieve incident: ${err.message}`);
+  }
+});
+
+app.patch('/api/incidents/:id/status', (req, res) => {
+  try {
+    const { status, operator } = req.body;
+    const allowed = ['new', 'acknowledged', 'investigating', 'resolved'];
+    if (!status || !allowed.includes(status)) {
+      return jsonError(res, 400, `Invalid incident status '${status}'. Allowed values: ${allowed.join(', ')}`);
+    }
+
+    const updated = updateIncidentStatus(req.params.id, status, operator || 'Operator (Desk 01)');
+    if (!updated) {
+      return jsonError(res, 404, `Incident '${req.params.id}' not found.`);
+    }
+    return res.status(200).json(updated);
+  } catch (err: any) {
+    return jsonError(res, 500, `Failed to update incident status: ${err.message}`);
+  }
+});
+
+app.post('/api/incidents/:id/notes', (req, res) => {
+  try {
+    const { text, author } = req.body;
+    if (!text || typeof text !== 'string' || !text.trim()) {
+      return jsonError(res, 400, 'Note text is required and cannot be empty.');
+    }
+
+    const note = addIncidentNote(req.params.id, text.trim(), author || 'Operator (Desk 01)');
+    if (!note) {
+      return jsonError(res, 404, `Incident '${req.params.id}' not found.`);
+    }
+    return res.status(201).json(note);
+  } catch (err: any) {
+    return jsonError(res, 500, `Failed to add incident note: ${err.message}`);
+  }
+});
+
+app.get('/api/alerts', (_req, res) => {
+  try {
+    const alerts = getAllAlerts();
+    return res.status(200).json(alerts);
+  } catch (err: any) {
+    return jsonError(res, 500, `Failed to retrieve alerts: ${err.message}`);
+  }
+});
+
+app.patch('/api/alerts/:id/acknowledge', (req, res) => {
+  try {
+    const ok = acknowledgeAlert(req.params.id);
+    if (!ok) {
+      return jsonError(res, 404, `Alert '${req.params.id}' not found.`);
+    }
+    return res.status(200).json({ success: true, id: req.params.id, acknowledged: true });
+  } catch (err: any) {
+    return jsonError(res, 500, `Failed to acknowledge alert: ${err.message}`);
+  }
+});
+
+app.post('/api/incidents/create-from-detection', async (req, res) => {
+  try {
+    const { upload_id, analysis_result } = req.body;
+    if (!upload_id) {
+      return jsonError(res, 400, 'upload_id is required.');
+    }
+
+    const record = uploadsDb.get(upload_id);
+    const videoFilename = record?.original_filename || `${upload_id}.mp4`;
+
+    let result = analysis_result;
+    if (!result) {
+      result = await runSmokeInference(upload_id);
+    }
+
+    if (!result.smoke_detected || result.frames_with_detections === 0) {
+      return res.status(200).json({
+        success: false,
+        message: 'No qualifying candidate smoke detections. Incident record was not created.'
+      });
+    }
+
+    const creation = createIncidentFromDetection(upload_id, videoFilename, result);
+    return res.status(200).json({
+      success: true,
+      ...creation
+    });
+  } catch (err: any) {
+    return jsonError(res, 500, `Failed to create incident from detection: ${err.message}`);
+  }
+});
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

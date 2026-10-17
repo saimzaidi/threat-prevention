@@ -267,7 +267,10 @@ export async function evaluateFrame(
 export async function runSmokeInference(
   uploadId: string,
   confThreshold = 0.20,
-  iouThreshold = 0.45
+  iouThreshold = 0.45,
+  intervalSeconds = 1.0,
+  origWidth = 640,
+  origHeight = 360
 ): Promise<SmokeAnalysisResult> {
   const startTime = Date.now();
   const framesDir = path.resolve(process.cwd(), 'storage', 'temp_frames', uploadId);
@@ -285,9 +288,8 @@ export async function runSmokeInference(
     throw new Error(`Sampled frames directory for upload '${uploadId}' is empty. Please run frame sampling first.`);
   }
 
-  // Probe original video width/height if available, otherwise default to 640x360
-  let width = 640;
-  let height = 360;
+  const width = origWidth || 640;
+  const height = origHeight || 360;
 
   const frameResults: FrameInferenceResult[] = [];
   let maxConfidenceDetected = 0;
@@ -296,7 +298,7 @@ export async function runSmokeInference(
   for (let idx = 0; idx < frameFiles.length; idx++) {
     const filename = frameFiles[idx];
     const framePath = path.join(framesDir, filename);
-    const timestampSec = Math.round(idx * 1.0 * 100) / 100;
+    const timestampSec = Math.round(idx * intervalSeconds * 100) / 100;
     const mins = Math.floor(timestampSec / 60);
     const secs = Math.floor(timestampSec % 60);
     const ms = Math.floor((timestampSec % 1) * 1000);

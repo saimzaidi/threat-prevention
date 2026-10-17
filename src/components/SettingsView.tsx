@@ -103,7 +103,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="space-y-1 text-neutral-600 font-mono text-[11px]">
               <div>Target: ONNX Runtime (CPU)</div>
               <div>Candidate: pyronear/yolo11s_sensitive-detector</div>
-              <div>Input Resolution: 640 × 640 px</div>
+              <div>Input Resolution: 1024 × 1024 px (verified from best.onnx)</div>
               <div>Default Frame Sampling: 1.0 fps</div>
               <div>Multi-frame Confirmation: Sustained 3 frames</div>
             </div>

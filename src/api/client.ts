@@ -1,4 +1,11 @@
-import { FrameSamplingResult, SmokeAnalysisResult } from '../types';
+import { 
+  FrameSamplingResult, 
+  SmokeAnalysisResult, 
+  IncidentRecord, 
+  AlertRecord, 
+  OperatorNote, 
+  IncidentStatus 
+} from '../types';
 
 export interface HealthResponse {
   status: string;
@@ -296,6 +303,241 @@ export async function detectSmokeInVideo(
     return {
       success: false,
       error: message,
+    };
+  }
+}
+
+export interface ModelStatus {
+  name: string;
+  version: string;
+  architecture: string;
+  target_class: string;
+  license: string;
+  input_shape: number[];
+  default_confidence_threshold: number;
+  default_iou_threshold: number;
+  engine: string;
+  model_file_exists: boolean;
+  model_path: string;
+}
+
+export async function fetchModelStatus(): Promise<{
+  success: boolean;
+  data?: ModelStatus;
+  error?: string;
+}> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/model/status`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    const result = await parseJsonResponse<ModelStatus>(response);
+    if (!result.ok || !result.data) {
+      return {
+        success: false,
+        error: result.error || `HTTP ${response.status}: Failed to fetch model status`,
+      };
+    }
+
+    return {
+      success: true,
+      data: result.data,
+    };
+  } catch (err: unknown) {
+    let message = 'Failed to fetch model status';
+    if (err instanceof Error) {
+      message = err.message;
+    }
+    return {
+      success: false,
+      error: message,
+    };
+  }
+}
+
+export async function fetchIncidents(): Promise<{
+  success: boolean;
+  data?: IncidentRecord[];
+  error?: string;
+}> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/incidents`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    const result = await parseJsonResponse<IncidentRecord[]>(response);
+    if (!result.ok || !result.data) {
+      return { success: false, error: result.error || 'Failed to fetch incidents' };
+    }
+    return { success: true, data: result.data };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Network error fetching incidents',
+    };
+  }
+}
+
+export async function fetchIncidentById(id: string): Promise<{
+  success: boolean;
+  data?: IncidentRecord;
+  error?: string;
+}> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/incidents/${id}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    const result = await parseJsonResponse<IncidentRecord>(response);
+    if (!result.ok || !result.data) {
+      return { success: false, error: result.error || `Failed to fetch incident ${id}` };
+    }
+    return { success: true, data: result.data };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Network error fetching incident',
+    };
+  }
+}
+
+export async function updateIncidentStatusApi(
+  id: string,
+  status: IncidentStatus,
+  operator = 'Operator (Desk 01)'
+): Promise<{
+  success: boolean;
+  data?: IncidentRecord;
+  error?: string;
+}> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/incidents/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status, operator }),
+    });
+    const result = await parseJsonResponse<IncidentRecord>(response);
+    if (!result.ok || !result.data) {
+      return { success: false, error: result.error || 'Failed to update incident status' };
+    }
+    return { success: true, data: result.data };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Network error updating incident status',
+    };
+  }
+}
+
+export async function addIncidentNoteApi(
+  id: string,
+  text: string,
+  author = 'Operator (Desk 01)'
+): Promise<{
+  success: boolean;
+  data?: OperatorNote;
+  error?: string;
+}> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/incidents/${id}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, author }),
+    });
+    const result = await parseJsonResponse<OperatorNote>(response);
+    if (!result.ok || !result.data) {
+      return { success: false, error: result.error || 'Failed to add operator note' };
+    }
+    return { success: true, data: result.data };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Network error adding note',
+    };
+  }
+}
+
+export async function fetchAlerts(): Promise<{
+  success: boolean;
+  data?: AlertRecord[];
+  error?: string;
+}> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/alerts`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    const result = await parseJsonResponse<AlertRecord[]>(response);
+    if (!result.ok || !result.data) {
+      return { success: false, error: result.error || 'Failed to fetch alerts' };
+    }
+    return { success: true, data: result.data };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Network error fetching alerts',
+    };
+  }
+}
+
+export async function acknowledgeAlertApi(id: string): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/alerts/${id}/acknowledge`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const result = await parseJsonResponse<{ success: boolean }>(response);
+    if (!result.ok) {
+      return { success: false, error: result.error || 'Failed to acknowledge alert' };
+    }
+    return { success: true };
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Network error acknowledging alert',
+    };
+  }
+}
+
+export async function createIncidentFromDetectionApi(
+  uploadId: string,
+  analysisResult?: SmokeAnalysisResult
+): Promise<{
+  success: boolean;
+  incident?: IncidentRecord;
+  alert?: AlertRecord;
+  isDuplicate?: boolean;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/incidents/create-from-detection`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ upload_id: uploadId, analysis_result: analysisResult }),
+    });
+    const result = await parseJsonResponse<{
+      success: boolean;
+      incident?: IncidentRecord;
+      alert?: AlertRecord;
+      isDuplicate?: boolean;
+      message?: string;
+      error?: string;
+    }>(response);
+    if (!result.ok || !result.data) {
+      return { success: false, error: result.error || 'Failed to create incident from detection' };
+    }
+    return result.data;
+  } catch (err: unknown) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Network error creating incident',
     };
   }
 }
