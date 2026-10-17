@@ -10,9 +10,15 @@ import {
   Cpu,
   Loader2,
   Server,
-  Hash
+  Hash,
+  Film,
+  Layers,
+  Sliders,
+  CheckCircle2,
+  Play
 } from 'lucide-react';
-import { uploadVideo, VideoUploadResult } from '../api/client';
+import { uploadVideo, sampleVideoFrames, VideoUploadResult } from '../api/client';
+import { FrameSamplingResult } from '../types';
 
 export const VideoAnalysisView: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -24,6 +30,13 @@ export const VideoAnalysisView: React.FC = () => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Stage 4 Frame Sampling State
+  const [isSampling, setIsSampling] = useState(false);
+  const [samplingResult, setSamplingResult] = useState<FrameSamplingResult | null>(null);
+  const [samplingError, setSamplingError] = useState<string | null>(null);
+  const [samplingInterval, setSamplingInterval] = useState<number>(1.0);
+  const [maxFramesLimit, setMaxFramesLimit] = useState<number>(30);
+
   // Allowed formats and limits
   const ALLOWED_TYPES = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
   const MAX_SIZE_MB = 100;
@@ -32,6 +45,8 @@ export const VideoAnalysisView: React.FC = () => {
     setFileError(null);
     setUploadError(null);
     setUploadResult(null);
+    setSamplingResult(null);
+    setSamplingError(null);
 
     // Validate type
     const isExtensionValid = /\.(mp4|mov|avi|webm)$/i.test(file.name);
@@ -61,6 +76,8 @@ export const VideoAnalysisView: React.FC = () => {
     if (!selectedFile || isUploading) return;
     setIsUploading(true);
     setUploadError(null);
+    setSamplingResult(null);
+    setSamplingError(null);
 
     const result = await uploadVideo(selectedFile);
     setIsUploading(false);
@@ -69,6 +86,24 @@ export const VideoAnalysisView: React.FC = () => {
       setUploadResult(result.data);
     } else {
       setUploadError(result.error || 'Video upload to backend failed.');
+    }
+  };
+
+  const handleSampleFrames = async () => {
+    if (!uploadResult || isSampling) return;
+    setIsSampling(true);
+    setSamplingError(null);
+
+    const result = await sampleVideoFrames(uploadResult.upload_id, {
+      interval_seconds: samplingInterval,
+      max_frames: maxFramesLimit,
+    });
+    setIsSampling(false);
+
+    if (result.success && result.data) {
+      setSamplingResult(result.data);
+    } else {
+      setSamplingError(result.error || 'Failed to decode and sample video frames.');
     }
   };
 
@@ -99,6 +134,8 @@ export const VideoAnalysisView: React.FC = () => {
     setFileError(null);
     setUploadError(null);
     setUploadResult(null);
+    setSamplingResult(null);
+    setSamplingError(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -111,10 +148,10 @@ export const VideoAnalysisView: React.FC = () => {
         <Info className="w-5 h-5 text-neutral-500 shrink-0 mt-0.5" />
         <div className="space-y-1 text-xs text-neutral-600">
           <span className="font-semibold text-neutral-900 block">
-            Video Upload & Ingestion Pipeline (Stage 4)
+            Video Ingestion & Frame Sampling Pipeline (Stages 3 & 4)
           </span>
           <p className="leading-relaxed">
-            Upload security footage directly to the local FastAPI backend. Files are validated server-side, assigned an isolated UUID, and written to a bounded temporary storage directory. OpenCV frame sampling and AI inference (Stage 5) will process the verified upload.
+            Upload security footage to backend storage, verify decodability, and extract a bounded, timestamped sample of frames at regular intervals using the OpenCV/FFmpeg engine. Frame metadata is extracted without loading entire videos into memory, preparing footage for Stage 5 inference.
           </p>
         </div>
       </div>
@@ -180,7 +217,7 @@ export const VideoAnalysisView: React.FC = () => {
 
       {/* Selected File Details and Local Preview */}
       {selectedFile && previewUrl && (
-        <div className="bg-white border border-stone-200 rounded-xl p-6 space-y-4">
+        <div className="bg-white border border-stone-200 rounded-xl p-6 space-y-5">
           <div className="flex items-center justify-between border-b border-stone-100 pb-3">
             <div className="flex items-center gap-2">
               <FileCheck className="w-4 h-4 text-emerald-600" />
@@ -288,13 +325,13 @@ export const VideoAnalysisView: React.FC = () => {
               </div>
 
               <p className="text-[11px] text-emerald-800 leading-relaxed font-sans">
-                The video file has been received and verified by the FastAPI backend. AI inference (OpenCV frame sampling and PyroNear YOLO11s smoke detection) has not yet run and will be connected in Stage 5.
+                The video file has been received and verified by the backend. Proceed to Stage 4 to sample frames at regular intervals using OpenCV before detector inference.
               </p>
             </div>
           )}
 
-          {/* Analysis Action */}
-          <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          {/* Upload Button */}
+          <div className="pt-1 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-stone-100 pb-4">
             <div className="text-[11px] text-neutral-500">
               Target model: <span className="font-mono text-neutral-800 font-medium">pyronear/yolo11s_sensitive-detector</span> (ONNX CPU)
             </div>
@@ -327,6 +364,198 @@ export const VideoAnalysisView: React.FC = () => {
               )}
             </button>
           </div>
+
+          {/* Stage 4: OpenCV Frame Sampling Card */}
+          {uploadResult && (
+            <div className="p-5 bg-stone-50 border border-stone-200 rounded-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-200 pb-3">
+                <div className="flex items-center gap-2">
+                  <Film className="w-4 h-4 text-neutral-700" />
+                  <h3 className="text-xs font-semibold text-neutral-900 uppercase tracking-wider">
+                    Stage 4 — OpenCV Video Frame Sampling
+                  </h3>
+                </div>
+                <span className="text-[10px] text-neutral-500 font-mono">
+                  Engine: OpenCV (FFmpeg Demuxer)
+                </span>
+              </div>
+
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                Probe the uploaded video container, confirm decodability, and extract a bounded sample of video frames at regular time intervals without loading the full video into memory.
+              </p>
+
+              {/* Sampling Controls */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3.5 rounded-lg border border-stone-200">
+                <div className="space-y-1">
+                  <label htmlFor="sampling-interval" className="text-[11px] font-medium text-neutral-700 block">
+                    Sampling Interval (Seconds)
+                  </label>
+                  <select
+                    id="sampling-interval"
+                    value={samplingInterval}
+                    onChange={(e) => setSamplingInterval(parseFloat(e.target.value))}
+                    disabled={isSampling}
+                    className="w-full text-xs bg-stone-50 border border-stone-300 rounded-md px-2.5 py-1.5 text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
+                  >
+                    <option value="0.5">Every 0.5s (High density)</option>
+                    <option value="1.0">Every 1.0s (Recommended standard)</option>
+                    <option value="2.0">Every 2.0s (Sparse overview)</option>
+                    <option value="5.0">Every 5.0s (Long video scan)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="max-frames-limit" className="text-[11px] font-medium text-neutral-700 block">
+                    Max Frame Limit (Bounded Memory)
+                  </label>
+                  <select
+                    id="max-frames-limit"
+                    value={maxFramesLimit}
+                    onChange={(e) => setMaxFramesLimit(parseInt(e.target.value, 10))}
+                    disabled={isSampling}
+                    className="w-full text-xs bg-stone-50 border border-stone-300 rounded-md px-2.5 py-1.5 text-neutral-900 focus:outline-hidden focus:ring-1 focus:ring-neutral-900"
+                  >
+                    <option value="10">10 Frames (Fast probe)</option>
+                    <option value="20">20 Frames</option>
+                    <option value="30">30 Frames (Recommended default)</option>
+                    <option value="50">50 Frames (Extended inspection)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Sample Action Button */}
+              <div className="flex items-center justify-between pt-1">
+                <div className="text-[11px] text-neutral-500">
+                  Target: Upload ID <span className="font-mono text-neutral-800">{uploadResult.upload_id.slice(0, 8)}...</span>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isSampling}
+                  onClick={handleSampleFrames}
+                  className={`px-4 py-2 text-xs font-medium text-white rounded-lg transition-colors shadow-xs flex items-center justify-center gap-2 ${
+                    isSampling
+                      ? 'bg-neutral-600 cursor-not-allowed'
+                      : 'bg-neutral-900 hover:bg-neutral-800 cursor-pointer'
+                  }`}
+                >
+                  {isSampling ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Decoding & Sampling Frames...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Sample Frames with OpenCV</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Sampling Error Banner */}
+              {samplingError && (
+                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-800 flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-semibold block">Sampling Error</span>
+                    <p className="text-[11px] leading-relaxed">{samplingError}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Sampling Success Results */}
+              {samplingResult && (
+                <div className="mt-4 bg-white border border-stone-200 rounded-xl p-4 space-y-4">
+                  <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span className="text-xs font-semibold text-neutral-900">
+                        OpenCV Video Stream & Decoded Frame Metadata
+                      </span>
+                    </div>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 font-medium px-2 py-0.5 rounded-full">
+                      Decodable: Verified
+                    </span>
+                  </div>
+
+                  {/* Stream Properties */}
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs font-mono bg-stone-50 p-3 rounded-lg border border-stone-200 text-neutral-800">
+                    <div>
+                      <span className="text-neutral-500 text-[10px] block font-sans">Duration</span>
+                      <span className="font-semibold">{samplingResult.video_metadata.duration_seconds}s</span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-500 text-[10px] block font-sans">Framerate</span>
+                      <span className="font-semibold">{samplingResult.video_metadata.fps} fps</span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-500 text-[10px] block font-sans">Resolution</span>
+                      <span className="font-semibold">
+                        {samplingResult.video_metadata.width} × {samplingResult.video_metadata.height}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-500 text-[10px] block font-sans">Codec</span>
+                      <span className="font-semibold uppercase">{samplingResult.video_metadata.codec}</span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-500 text-[10px] block font-sans">Sampled Frames</span>
+                      <span className="font-semibold text-emerald-700">
+                        {samplingResult.frames.length} / {samplingResult.video_metadata.total_frames}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Sampled Frames Timeline Table */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs text-neutral-600">
+                      <span className="font-medium text-neutral-900">
+                        Extracted Frame Timeline ({samplingResult.sampling_config.interval_seconds}s interval)
+                      </span>
+                      <span className="text-[11px] text-neutral-500">
+                        {samplingResult.frames.length} frames staged
+                      </span>
+                    </div>
+
+                    <div className="max-h-52 overflow-y-auto border border-stone-200 rounded-lg divide-y divide-stone-100 text-xs font-mono">
+                      {samplingResult.frames.map((frame) => (
+                        <div
+                          key={frame.frame_index}
+                          className="px-3 py-2 flex items-center justify-between hover:bg-stone-50 transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-neutral-400 font-sans text-[11px] w-6">
+                              #{frame.frame_index}
+                            </span>
+                            <span className="font-semibold text-neutral-900">
+                              {frame.timestamp_formatted}
+                            </span>
+                            <span className="text-[11px] text-neutral-500">
+                              ({frame.timestamp_seconds.toFixed(2)}s)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 text-[11px]">
+                            <span className="text-neutral-500">
+                              {frame.width}×{frame.height}
+                            </span>
+                            <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[10px] font-medium font-sans">
+                              Decoded Matrix OK
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Safety & Stage Boundary Note */}
+                  <p className="text-[11px] text-neutral-500 leading-relaxed border-t border-stone-100 pt-3">
+                    <span className="font-semibold text-neutral-700">Safety & Stage Boundary:</span> Frame decoding verified successfully. Frames are staged in isolated server storage for Stage 5 inference. No smoke or threat presence has been inferred or claimed at this stage.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -343,7 +572,7 @@ export const VideoAnalysisView: React.FC = () => {
               <span>1. OpenCV Sampling</span>
             </div>
             <p className="text-neutral-600 text-[11px] leading-relaxed">
-              FastAPI opens video stream locally, validates decodability, and samples frames at 1-second intervals without loading the full video into memory.
+              Opens video stream locally, validates decodability, and samples frames at configurable intervals without loading the full video into memory.
             </p>
           </div>
 
@@ -371,4 +600,3 @@ export const VideoAnalysisView: React.FC = () => {
     </div>
   );
 };
-

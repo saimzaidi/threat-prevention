@@ -75,3 +75,94 @@ export interface ActivityLogItem {
   timestamp: string;
   details: string;
 }
+
+export interface SampledFrameMetadata {
+  frame_index: number;
+  filename?: string;
+  timestamp_seconds: number;
+  timestamp_formatted: string;
+  width: number;
+  height: number;
+}
+
+export interface VideoMetadata {
+  duration_seconds: number;
+  fps: number;
+  width: number;
+  height: number;
+  total_frames: number;
+  codec: string;
+}
+
+export interface FrameSamplingResult {
+  upload_id: string;
+  status: string;
+  decodable: boolean;
+  engine: string;
+  video_metadata: VideoMetadata;
+  sampling_config: {
+    interval_seconds: number;
+    max_frames_limit: number;
+    frames_sampled: number;
+  };
+  frames: SampledFrameMetadata[];
+  message: string;
+}
+
+export interface BoundingBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  width: number;
+  height: number;
+}
+
+export interface NormalizedBoundingBox {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface SmokeDetection {
+  class: string;
+  confidence: number;
+  bbox: BoundingBox;
+  normalized_bbox: NormalizedBoundingBox;
+}
+
+export interface FrameInferenceResult {
+  frame_index: number;
+  filename: string;
+  timestamp_seconds: number;
+  timestamp_formatted: string;
+  smoke_detected: boolean;
+  max_score: number;
+  detections: SmokeDetection[];
+}
+
+export interface SmokeAnalysisResult {
+  upload_id: string;
+  status: string;
+  smoke_detected: boolean;
+  model_info: {
+    name: string;
+    version: string;
+    architecture: string;
+    target_class: string;
+    license: string;
+    input_shape: number[];
+    confidence_threshold: number;
+    iou_threshold: number;
+    engine: string;
+  };
+  total_frames_evaluated: number;
+  frames_with_detections: number;
+  max_confidence_detected: number;
+  processing_time_ms: number;
+  frame_results: FrameInferenceResult[];
+  notice: string;
+}
+
+
